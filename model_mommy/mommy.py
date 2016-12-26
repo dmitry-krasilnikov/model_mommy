@@ -19,7 +19,7 @@ from django.db.models import (
     PositiveIntegerField, PositiveSmallIntegerField,
     BooleanField, DecimalField, FloatField,
     FileField, ImageField, Field, IPAddressField,
-    ForeignKey, ManyToManyField, OneToOneField)
+    ForeignKey, ManyToManyField, OneToOneField, Model)
 from django.db.models.fields.related import ForeignRelatedObjectsDescriptor
 try:
     from django.db.models import BigIntegerField
@@ -105,6 +105,9 @@ def prepare_recipe(mommy_recipe_name, _quantity=None, **new_attrs):
 
 def __m2m_generator(model, **attrs):
     return make(model, _quantity=MAX_MANY_QUANTITY, **attrs)
+
+def _django_save(self, *args, **kwargs):
+    return Model.save(self, *args, **kwargs)
 
 make.required = foreign_key_required
 prepare.required = foreign_key_required
@@ -232,9 +235,10 @@ class Mommy(object):
     # rebuilding the model cache for every make_* or prepare_* call.
     finder = ModelFinder()
 
-    def __init__(self, model, make_m2m=False):
+    def __init__(self, model, make_m2m=False, skip_save=True):
         self.make_m2m = make_m2m
         self.m2m_dict = {}
+        self._skip_save = skip_save
 
         if isinstance(model, ModelBase):
             self.model = model
@@ -329,12 +333,17 @@ class Mommy(object):
             if isinstance(field, ForeignRelatedObjectsDescriptor):
                 one_to_many_keys[k] = attrs.pop(k)
 
+        if _commit and self._skip_save:
+            orig_save = self.model.save
+            self.model.save = _django_save
         instance = self.model(**attrs)
         # m2m only works for persisted instances
         if _commit:
             instance.save()
             self._handle_one_to_many(instance, one_to_many_keys)
             self._handle_m2m(instance)
+            if self._skip_save:
+                self.model.save = orig_save
         return instance
 
     def _handle_one_to_many(self, instance, attrs):
